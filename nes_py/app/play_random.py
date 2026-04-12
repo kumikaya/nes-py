@@ -7,7 +7,7 @@ def play_random(env, steps):
     Play the environment making uniformly random decisions.
 
     Args:
-        env (gym.Env): the initialized gym environment to play
+        env: the initialized gymnasium environment to play
         steps (int): the number of random steps to take
 
     Returns:
@@ -19,9 +19,10 @@ def play_random(env, steps):
         progress = tqdm(range(steps))
         for _ in progress:
             if done:
-                _ = env.reset()
+                _, _ = env.reset()
             action = env.action_space.sample()
-            _, reward, done, info = env.step(action)
+            _, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
             progress.set_postfix(reward=reward, info=info)
             env.render()
     except KeyboardInterrupt:

@@ -1,12 +1,13 @@
 """A CTypes interface to the C++ NES environment."""
+
 import ctypes
 import glob
 import itertools
 import os
 import sys
-import gym
-from gym.spaces import Box
-from gym.spaces import Discrete
+import gymnasium as gym
+from gymnasium.spaces import Box
+from gymnasium.spaces import Discrete
 import numpy as np
 from ._rom import ROM
 from ._image_viewer import ImageViewer
@@ -15,14 +16,14 @@ from ._image_viewer import ImageViewer
 # the path to the directory this file is in
 _MODULE_PATH = os.path.dirname(__file__)
 # the pattern to find the C++ shared object library
-_SO_PATH = 'lib_nes_env*'
+_SO_PATH = "lib_nes_env*"
 # the absolute path to the C++ shared object library
 _LIB_PATH = os.path.join(_MODULE_PATH, _SO_PATH)
 # load the library from the shared object file
 try:
     _LIB = ctypes.cdll.LoadLibrary(glob.glob(_LIB_PATH)[0])
 except IndexError:
-    raise OSError('missing static lib_nes_env*.so library!')
+    raise OSError("missing static lib_nes_env*.so library!")
 
 
 # setup the argument and return types for Width
@@ -84,26 +85,18 @@ class NESEnv(gym.Env):
     """An NES environment based on the LaiNES emulator."""
 
     # relevant meta-data about the environment
-    metadata = {
-        'render.modes': ['rgb_array', 'human'],
-        'video.frames_per_second': 60
-    }
+    metadata = {"render_modes": ["rgb_array", "human"], "render_fps": 60}
 
     # the legal range for rewards for this environment
-    reward_range = (-float('inf'), float('inf'))
+    reward_range = (-float("inf"), float("inf"))
 
     # observation space for the environment is static across all instances
-    observation_space = Box(
-        low=0,
-        high=255,
-        shape=SCREEN_SHAPE_24_BIT,
-        dtype=np.uint8
-    )
+    observation_space = Box(low=0, high=255, shape=SCREEN_SHAPE_24_BIT, dtype=np.uint8)
 
     # action space is a bitmap of button press values for the 8 NES buttons
     action_space = Discrete(256)
 
-    def __init__(self, rom_path):
+    def __init__(self, rom_path: str, render_mode: str | None = None):
         """
         Create a new NES environment.
 
@@ -114,27 +107,28 @@ class NESEnv(gym.Env):
             None
 
         """
+        self.render_mode = render_mode
         # create a ROM file from the ROM path
         rom = ROM(rom_path)
         # check that there is PRG ROM
         if rom.prg_rom_size == 0:
-            raise ValueError('ROM has no PRG-ROM banks.')
+            raise ValueError("ROM has no PRG-ROM banks.")
         # ensure that there is no trainer
         if rom.has_trainer:
-            raise ValueError('ROM has trainer. trainer is not supported.')
+            raise ValueError("ROM has trainer. trainer is not supported.")
         # try to read the PRG ROM and raise a value error if it fails
         _ = rom.prg_rom
         # try to read the CHR ROM and raise a value error if it fails
         _ = rom.chr_rom
         # check the TV system
         if rom.is_pal:
-            raise ValueError('ROM is PAL. PAL is not supported.')
+            raise ValueError("ROM is PAL. PAL is not supported.")
         # check that the mapper is implemented
         elif rom.mapper not in {0, 1, 2, 3}:
-            msg = 'ROM has an unsupported mapper number {}. please see https://github.com/Kautenja/nes-py/issues/28 for more information.'
+            msg = "ROM has an unsupported mapper number {}. please see https://github.com/Kautenja/nes-py/issues/28 for more information."
             raise ValueError(msg.format(rom.mapper))
         # create a dedicated random number generator for the environment
-        self.np_random = np.random.RandomState()
+        self.np_random = np.random.default_rng()
         # store the ROM path
         self._rom_path = rom_path
         # initialize the C++ object for running the environment
@@ -157,11 +151,11 @@ class NESEnv(gym.Env):
         # create a buffer from the contents of the address location
         buffer_ = ctypes.cast(address, ctypes.POINTER(SCREEN_TENSOR)).contents
         # create a NumPy array from the buffer
-        screen = np.frombuffer(buffer_, dtype='uint8')
+        screen = np.frombuffer(buffer_, dtype="uint8")
         # reshape the screen from a column vector to a tensor
         screen = screen.reshape(SCREEN_SHAPE_32_BIT)
         # flip the bytes if the machine is little-endian (which it likely is)
-        if sys.byteorder == 'little':
+        if sys.byteorder == "little":
             # invert the little-endian BGRx channels to big-endian xRGB
             screen = screen[:, :, ::-1]
         # remove the 0th axis (padding from storing colors in 32 bit)
@@ -174,7 +168,7 @@ class NESEnv(gym.Env):
         # create a buffer from the contents of the address location
         buffer_ = ctypes.cast(address, ctypes.POINTER(RAM_VECTOR)).contents
         # create a NumPy array from the buffer
-        return np.frombuffer(buffer_, dtype='uint8')
+        return np.frombuffer(buffer_, dtype="uint8")
 
     def _controller_buffer(self, port):
         """
@@ -192,7 +186,7 @@ class NESEnv(gym.Env):
         # create a memory buffer using the ctypes pointer for this vector
         buffer_ = ctypes.cast(address, ctypes.POINTER(CONTROLLER_VECTOR)).contents
         # create a NumPy buffer from the binary data and return it
-        return np.frombuffer(buffer_, dtype='uint8')
+        return np.frombuffer(buffer_, dtype="uint8")
 
     def _frame_advance(self, action):
         """
@@ -243,17 +237,16 @@ class NESEnv(gym.Env):
         # return the list of seeds used by RNG(s) in the environment
         return [seed]
 
-    def reset(self, seed=None, options=None, return_info=None):
+    def reset(self, seed=None, options=None):
         """
         Reset the state of the environment and returns an initial observation.
 
         Args:
             seed (int): an optional random number seed for the next episode
             options (any): unused
-            return_info (any): unused
 
         Returns:
-            state (np.ndarray): next frame as a result of the given action
+            tuple: (observation, info)
 
         """
         # Set the seed.
@@ -269,8 +262,8 @@ class NESEnv(gym.Env):
         self._did_reset()
         # set the done flag to false
         self.done = False
-        # return the screen from the emulator
-        return self.screen
+        # return the screen from the emulator and info dict
+        return self.screen, {}
 
     def _did_reset(self):
         """Handle any RAM hacking after a reset occurs."""
@@ -287,13 +280,14 @@ class NESEnv(gym.Env):
             a tuple of:
             - state (np.ndarray): next frame as a result of the given action
             - reward (float) : amount of reward returned after given action
-            - done (boolean): whether the episode has ended
+            - terminated (boolean): whether the episode has ended
+            - truncated (boolean): whether the episode was truncated
             - info (dict): contains auxiliary diagnostic information
 
         """
         # if the environment is done, raise an error
         if self.done:
-            raise ValueError('cannot step in a done environment! call `reset`')
+            raise ValueError("cannot step in a done environment! call `reset`")
         # set the action on the controller
         self.controllers[0][:] = action
         # pass the action to the emulator as an unsigned byte
@@ -312,7 +306,7 @@ class NESEnv(gym.Env):
         elif reward > self.reward_range[1]:
             reward = self.reward_range[1]
         # return the screen from the emulator and other relevant data
-        return self.screen, reward, self.done, info
+        return self.screen, reward, self.done, False, info
 
     def _get_reward(self):
         """Return the reward after a step occurs."""
@@ -343,7 +337,7 @@ class NESEnv(gym.Env):
         """Close the environment."""
         # make sure the environment hasn't already been closed
         if self._env is None:
-            raise ValueError('env has already been closed.')
+            raise ValueError("env has already been closed.")
         # purge the environment from C++ memory
         _LIB.Close(self._env)
         # deallocate the object locally
@@ -352,27 +346,17 @@ class NESEnv(gym.Env):
         if self.viewer is not None:
             self.viewer.close()
 
-    def render(self, mode='human'):
+    def render(self):
         """
-        Render the environment.
-
-        Args:
-            mode (str): the mode to render with:
-            - human: render to the current display
-            - rgb_array: Return an numpy.ndarray with shape (x, y, 3),
-              representing RGB values for an x-by-y pixel image
-
-        Returns:
-            a numpy array if mode is 'rgb_array', None otherwise
-
+        Render the environment based on self.render_mode.
         """
-        if mode == 'human':
+        if self.render_mode == "human":
             # if the viewer isn't setup, import it and create one
             if self.viewer is None:
                 # get the caption for the ImageViewer
                 if self.spec is None:
                     # if there is no spec, just use the .nes filename
-                    caption = self._rom_path.split('/')[-1]
+                    caption = self._rom_path.split("/")[-1]
                 else:
                     # set the caption to the OpenAI Gym id
                     caption = self.spec.id
@@ -384,28 +368,29 @@ class NESEnv(gym.Env):
                 )
             # show the screen on the image viewer
             self.viewer.show(self.screen)
-        elif mode == 'rgb_array':
-            return self.screen
+        elif self.render_mode == "rgb_array":
+            return self.screen.copy()
+        elif self.render_mode is None:
+            return None
         else:
-            # unpack the modes as comma delineated strings ('a', 'b', ...)
-            render_modes = [repr(x) for x in self.metadata['render.modes']]
-            msg = 'valid render modes are: {}'.format(', '.join(render_modes))
-            raise NotImplementedError(msg)
+            raise NotImplementedError(f"valid render modes are: {self.render_mode}")
 
     def get_keys_to_action(self):
         """Return the dictionary of keyboard keys to actions."""
         # keyboard keys in an array ordered by their byte order in the bitmap
         # i.e. right = 7, left = 6, ..., B = 1, A = 0
-        buttons = np.array([
-            ord('d'),  # right
-            ord('a'),  # left
-            ord('s'),  # down
-            ord('w'),  # up
-            ord('\r'), # start
-            ord(' '),  # select
-            ord('p'),  # B
-            ord('o'),  # A
-        ])
+        buttons = np.array(
+            [
+                ord("d"),  # right
+                ord("a"),  # left
+                ord("s"),  # down
+                ord("w"),  # up
+                ord("\r"),  # start
+                ord(" "),  # select
+                ord("p"),  # B
+                ord("o"),  # A
+            ]
+        )
         # the dictionary of key presses to controller codes
         keys_to_action = {}
         # the combination map of values for the controller
@@ -413,7 +398,7 @@ class NESEnv(gym.Env):
         # iterate over all the combinations
         for combination in itertools.product(*values):
             # unpack the tuple of bits into an integer
-            byte = int(''.join(map(str, combination)), 2)
+            byte = int("".join(map(str, combination)), 2)
             # unwrap the pressed buttons based on the bitmap
             pressed = buttons[list(map(bool, combination))]
             # assign the pressed buttons to the output byte
@@ -423,7 +408,7 @@ class NESEnv(gym.Env):
 
     def get_action_meanings(self):
         """Return a list of actions meanings."""
-        return ['NOOP']
+        return ["NOOP"]
 
 
 # explicitly define the outward facing API of this module
